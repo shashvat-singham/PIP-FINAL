@@ -6,6 +6,7 @@ A production-grade AI-powered stock research platform that provides comprehensiv
 
 ### Core Capabilities
 - **Flexible Input Recognition**: Accepts both company names (e.g., "Apple", "Microsoft") and tickers (e.g., "AAPL", "MSFT")
+- **🆕 Gemini-Powered Smart Correction**: Uses AI to detect and correct misspelled company names (e.g., "matae" → "Meta") with interactive confirmation
 - **Intelligent Spelling Detection**: Automatically detects misspelled company names with interactive confirmation
 - **Multi-Company Analysis**: Analyzes multiple companies in parallel with separate, clearly labeled results
 - **Real-Time Data**: Genuine market data from Yahoo Finance API

@@ -16,12 +16,15 @@ from backend.app.models import (
     AnalysisStatus,
     TickerInsight,
     StanceType,
-    ConfidenceLevel
+    ConfidenceLevel,
+    CorrectionSuggestion,
+    ConfirmationPrompt
 )
 from backend.agents.yahoo_finance_orchestrator import YahooFinanceOrchestrator
 from backend.config.settings import get_settings
 from backend.services.ticker_mapper import get_ticker_mapper
 from backend.services.conversation_manager import get_conversation_manager
+from backend.services.smart_correction_service import get_smart_correction_service
 from backend.utils.formatters import format_analysis_response
 
 logger = structlog.get_logger()
@@ -37,6 +40,7 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
     Analyze stocks based on natural language query.
     
     This endpoint triggers the multi-agent research process for the specified stocks.
+    Includes smart correction for misspelled company names using Gemini AI.
     """
     request_id = str(uuid.uuid4())
     start_time = time.time()
@@ -51,48 +55,158 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
         orchestrator = YahooFinanceOrchestrator()
         ticker_mapper = get_ticker_mapper()
         conversation_manager = get_conversation_manager()
+        smart_correction_service = get_smart_correction_service()
         
-        # Check for unresolved company names
-        tickers, unresolved_names = ticker_mapper.extract_tickers_from_query(request.query)
-        
-        # If there are unresolved names, check for suggestions
-        if unresolved_names:
-            for name in unresolved_names:
-                suggestions = ticker_mapper.find_suggestions(name, n=3)
-                if suggestions:
-                    # Create conversation for confirmation
-                    conversation = conversation_manager.create_conversation(request_id)
-                    conversation.original_query = request.query
-                    confirmation_prompt = conversation_manager.create_confirmation_prompt(
-                        conversation, suggestions
-                    )
+        # Handle follow-up confirmation responses
+        if request.conversation_id and request.confirmation_response:
+            conversation = conversation_manager.get_conversation(request.conversation_id)
+            if conversation:
+                response_result = conversation_manager.process_confirmation_response(
+                    conversation, 
+                    request.confirmation_response
+                )
+                
+                if response_result["status"] == "confirmed":
+                    # User confirmed, proceed with analysis using the confirmed ticker
+                    ticker = response_result["ticker"]
+                    tickers = [ticker]
+                    unresolved_names = []
                     
-                    # Return confirmation request instead of analysis
+                    logger.info("User confirmed correction",
+                               conversation_id=request.conversation_id,
+                               ticker=ticker)
+                elif response_result["status"] == "rejected":
+                    # User rejected, ask for clarification
                     return AnalysisResponse(
                         request_id=request_id,
                         query=request.query,
                         insights=[],
-                        total_latency_ms=0.0,
+                        total_latency_ms=(time.time() - start_time) * 1000,
                         tickers_analyzed=[],
                         agents_used=[],
                         started_at=started_at,
                         completed_at=datetime.now(),
                         success=False,
-                        warnings=[f"Need confirmation for: {name}"],
-                        errors=[],
-                        # Add confirmation data to response
-                        # Note: This would require updating the AnalysisResponse model
-                        # For now, we'll raise an exception with the confirmation prompt
+                        needs_confirmation=True,
+                        confirmation_prompt=ConfirmationPrompt(
+                            type="clarification",
+                            message=response_result["message"],
+                            suggestion=None,
+                            conversation_id=request.conversation_id
+                        )
                     )
+            else:
+                logger.warning("Conversation not found or expired",
+                              conversation_id=request.conversation_id)
+                # Treat as new query
+                request.conversation_id = None
+        
+        # If not a follow-up, process as new query
+        if not request.conversation_id or not request.confirmation_response:
+            # First, try smart correction with Gemini
+            if smart_correction_service:
+                try:
+                    correction_result = smart_correction_service.detect_and_correct(request.query)
                     
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "type": "confirmation_required",
-                            "conversation_id": request_id,
-                            "prompt": confirmation_prompt
-                        }
-                    )
+                    if correction_result.get('is_misspelled') and correction_result.get('ticker'):
+                        # Create a conversation for confirmation
+                        conversation = conversation_manager.create_conversation(request_id)
+                        conversation.original_query = request.query
+                        
+                        # Store the correction suggestion
+                        conversation.pending_confirmations = [{
+                            "company": correction_result.get('corrected_name'),
+                            "ticker": correction_result.get('ticker'),
+                            "confidence": correction_result.get('confidence')
+                        }]
+                        
+                        # Generate confirmation message
+                        confirmation_message = smart_correction_service.generate_confirmation_message(
+                            correction_result
+                        )
+                        
+                        logger.info("Smart correction detected misspelling",
+                                   original=correction_result.get('original_input'),
+                                   corrected=correction_result.get('corrected_name'),
+                                   ticker=correction_result.get('ticker'))
+                        
+                        # Return confirmation prompt
+                        return AnalysisResponse(
+                            request_id=request_id,
+                            query=request.query,
+                            insights=[],
+                            total_latency_ms=(time.time() - start_time) * 1000,
+                            tickers_analyzed=[],
+                            agents_used=[],
+                            started_at=started_at,
+                            completed_at=datetime.now(),
+                            success=False,
+                            needs_confirmation=True,
+                            confirmation_prompt=ConfirmationPrompt(
+                                type="confirmation",
+                                message=confirmation_message,
+                                suggestion=CorrectionSuggestion(
+                                    original_input=correction_result.get('original_input'),
+                                    corrected_name=correction_result.get('corrected_name'),
+                                    ticker=correction_result.get('ticker'),
+                                    confidence=correction_result.get('confidence'),
+                                    explanation=correction_result.get('explanation')
+                                ),
+                                conversation_id=request_id
+                            )
+                        )
+                except Exception as e:
+                    logger.warning("Smart correction failed, falling back to traditional method",
+                                  error=str(e))
+            
+            # Fallback to traditional ticker extraction
+            tickers, unresolved_names = ticker_mapper.extract_tickers_from_query(request.query)
+            
+            # If there are unresolved names, check for suggestions using fuzzy matching
+            if unresolved_names:
+                for name in unresolved_names:
+                    suggestions = ticker_mapper.find_suggestions(name, n=3)
+                    if suggestions:
+                        # Create conversation for confirmation
+                        conversation = conversation_manager.create_conversation(request_id)
+                        conversation.original_query = request.query
+                        confirmation_prompt = conversation_manager.create_confirmation_prompt(
+                            conversation, suggestions
+                        )
+                        
+                        logger.info("Fuzzy matching found suggestions",
+                                   name=name,
+                                   suggestions_count=len(suggestions))
+                        
+                        # Return confirmation request
+                        return AnalysisResponse(
+                            request_id=request_id,
+                            query=request.query,
+                            insights=[],
+                            total_latency_ms=(time.time() - start_time) * 1000,
+                            tickers_analyzed=[],
+                            agents_used=[],
+                            started_at=started_at,
+                            completed_at=datetime.now(),
+                            success=False,
+                            needs_confirmation=True,
+                            confirmation_prompt=ConfirmationPrompt(
+                                type=confirmation_prompt["type"],
+                                message=confirmation_prompt["message"],
+                                suggestion=CorrectionSuggestion(
+                                    original_input=name,
+                                    corrected_name=suggestions[0][0],
+                                    ticker=suggestions[0][1],
+                                    confidence="medium",
+                                    explanation="Found using fuzzy matching"
+                                ) if len(suggestions) == 1 else None,
+                                conversation_id=request_id
+                            )
+                        )
+        
+        # If we get here, we have valid tickers to analyze
+        if not tickers:
+            raise ValueError("No valid stock tickers found in query. Please provide company names or ticker symbols.")
         
         # Update status
         analysis_status_store[request_id] = {
@@ -269,5 +383,11 @@ async def list_available_agents() -> Dict[str, Any]:
         "data_sources": [
             "Yahoo Finance (real-time stock data and news)",
             "Google Gemini AI (intelligent analysis and synthesis)"
+        ],
+        "features": [
+            "Smart spelling correction using Gemini AI",
+            "Interactive confirmation for ambiguous company names",
+            "Multi-company parallel analysis"
         ]
     }
+

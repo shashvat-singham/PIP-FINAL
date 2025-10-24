@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
-import { Input } from '@/components/ui/input.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Textarea } from '@/components/ui/textarea.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { ScrollArea } from '@/components/ui/scroll-area.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
-import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { 
   Search, 
@@ -25,11 +24,86 @@ import {
   ExternalLink,
   AlertCircle,
   CheckCircle,
-  Loader2
+  Loader2,
+  HelpCircle,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react'
 import './App.css'
 
 const API_BASE_URL = 'http://localhost:8000/api/v1'
+
+// New Confirmation Dialog Component
+function ConfirmationDialog({ prompt, onConfirm, onReject }) {
+  return (
+    <Card className="mb-8 border-2 border-blue-300 bg-blue-50 dark:bg-blue-900/20">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-blue-900 dark:text-blue-100">
+          <HelpCircle className="h-5 w-5" />
+          Confirmation Needed
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Alert className="border-blue-200 bg-white dark:bg-gray-800">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Did you mean this?</AlertTitle>
+          <AlertDescription className="mt-2 text-base">
+            {prompt.message}
+          </AlertDescription>
+        </Alert>
+
+        {prompt.suggestion && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 space-y-2">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-gray-600 dark:text-gray-400">Original Input:</span>
+                <p className="text-gray-900 dark:text-gray-100 font-mono">{prompt.suggestion.original_input}</p>
+              </div>
+              <div>
+                <span className="font-medium text-gray-600 dark:text-gray-400">Suggested:</span>
+                <p className="text-gray-900 dark:text-gray-100 font-semibold">
+                  {prompt.suggestion.corrected_name} ({prompt.suggestion.ticker})
+                </p>
+              </div>
+              <div>
+                <span className="font-medium text-gray-600 dark:text-gray-400">Confidence:</span>
+                <Badge className={
+                  prompt.suggestion.confidence === 'high' ? 'bg-green-100 text-green-800' :
+                  prompt.suggestion.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-gray-100 text-gray-800'
+                }>
+                  {prompt.suggestion.confidence.toUpperCase()}
+                </Badge>
+              </div>
+              <div>
+                <span className="font-medium text-gray-600 dark:text-gray-400">Explanation:</span>
+                <p className="text-sm text-gray-700 dark:text-gray-300">{prompt.suggestion.explanation}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-3 justify-end">
+          <Button 
+            variant="outline" 
+            onClick={onReject}
+            className="flex items-center gap-2"
+          >
+            <ThumbsDown className="h-4 w-4" />
+            No, that's not right
+          </Button>
+          <Button 
+            onClick={onConfirm}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+          >
+            <ThumbsUp className="h-4 w-4" />
+            Yes, proceed with {prompt.suggestion?.ticker || 'this'}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function App() {
   const [query, setQuery] = useState('')
@@ -38,27 +112,46 @@ function App() {
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(0)
   const [currentStep, setCurrentStep] = useState('')
+  
+  // New state for confirmation flow
+  const [confirmationPrompt, setConfirmationPrompt] = useState(null)
+  const [conversationId, setConversationId] = useState(null)
+  const [originalQuery, setOriginalQuery] = useState('')
 
-  const handleAnalyze = async () => {
-    if (!query.trim()) return
+  const handleAnalyze = async (confirmationResponse = null) => {
+    if (!query.trim() && !confirmationResponse) return
 
     setIsAnalyzing(true)
     setError(null)
-    setAnalysisResult(null)
     setProgress(0)
     setCurrentStep('Initializing analysis...')
 
+    // If this is the first request, clear previous results
+    if (!confirmationResponse) {
+      setAnalysisResult(null)
+      setConfirmationPrompt(null)
+      setOriginalQuery(query)
+    }
+
     try {
+      const requestBody = {
+        query: confirmationResponse ? originalQuery : query,
+        max_iterations: 3,
+        timeout_seconds: 60
+      }
+
+      // Add conversation fields if this is a confirmation response
+      if (confirmationResponse && conversationId) {
+        requestBody.conversation_id = conversationId
+        requestBody.confirmation_response = confirmationResponse
+      }
+
       const response = await fetch(`${API_BASE_URL}/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          query: query,
-          max_iterations: 3,
-          timeout_seconds: 60
-        })
+        body: JSON.stringify(requestBody)
       })
 
       if (!response.ok) {
@@ -66,14 +159,35 @@ function App() {
       }
 
       const result = await response.json()
-      setAnalysisResult(result)
-      setProgress(100)
-      setCurrentStep('Analysis complete')
+
+      // Check if confirmation is needed
+      if (result.needs_confirmation && result.confirmation_prompt) {
+        setConfirmationPrompt(result.confirmation_prompt)
+        setConversationId(result.confirmation_prompt.conversation_id)
+        setProgress(0)
+        setCurrentStep('Waiting for confirmation...')
+      } else {
+        // Normal analysis result
+        setAnalysisResult(result)
+        setConfirmationPrompt(null)
+        setConversationId(null)
+        setProgress(100)
+        setCurrentStep('Analysis complete')
+      }
     } catch (err) {
       setError(err.message)
+      setConfirmationPrompt(null)
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const handleConfirm = () => {
+    handleAnalyze('Yes')
+  }
+
+  const handleReject = () => {
+    handleAnalyze('No')
   }
 
   const getStanceIcon = (stance) => {
@@ -130,7 +244,7 @@ function App() {
 
   // Simulate progress updates during analysis
   useEffect(() => {
-    if (isAnalyzing) {
+    if (isAnalyzing && !confirmationPrompt) {
       const interval = setInterval(() => {
         setProgress(prev => {
           if (prev >= 90) return prev
@@ -140,7 +254,7 @@ function App() {
 
       return () => clearInterval(interval)
     }
-  }, [isAnalyzing])
+  }, [isAnalyzing, confirmationPrompt])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -151,8 +265,11 @@ function App() {
             Stock Research Chatbot
           </h1>
           <p className="text-lg text-gray-600 dark:text-gray-300">
-            AI-powered multi-agent research for informed investment decisions
+            AI-powered multi-agent research with smart spelling correction
           </p>
+          <Badge className="mt-2 bg-blue-100 text-blue-800 border-blue-200">
+            🆕 Gemini-Powered Smart Correction
+          </Badge>
         </div>
 
         {/* Query Input */}
@@ -163,21 +280,22 @@ function App() {
               Research Query
             </CardTitle>
             <CardDescription>
-              Enter stock tickers and your research question (e.g., "Analyze NVDA, AMD, TSM for AI datacenter demand")
+              Enter company names or tickers - typos are OK! (e.g., "Analyze matae for 1 month" or "Compare microsft and gogle")
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex gap-4">
               <Textarea
-                placeholder="Analyze NVDA, AMD, TSM for AI datacenter demand; short-term outlook 3-6 months..."
+                placeholder="Try: 'Analyze matae for 1 month' or 'Compare microsft, gogle, and amazn'"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="flex-1"
                 rows={3}
+                disabled={isAnalyzing || confirmationPrompt !== null}
               />
               <Button 
-                onClick={handleAnalyze}
-                disabled={isAnalyzing || !query.trim()}
+                onClick={() => handleAnalyze()}
+                disabled={isAnalyzing || !query.trim() || confirmationPrompt !== null}
                 className="px-8"
               >
                 {isAnalyzing ? (
@@ -196,8 +314,17 @@ function App() {
           </CardContent>
         </Card>
 
+        {/* Confirmation Dialog */}
+        {confirmationPrompt && (
+          <ConfirmationDialog 
+            prompt={confirmationPrompt}
+            onConfirm={handleConfirm}
+            onReject={handleReject}
+          />
+        )}
+
         {/* Progress Indicator */}
-        {isAnalyzing && (
+        {isAnalyzing && !confirmationPrompt && (
           <Card className="mb-8">
             <CardContent className="pt-6">
               <div className="space-y-4">
@@ -508,3 +635,4 @@ function App() {
 }
 
 export default App
+

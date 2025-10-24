@@ -93,6 +93,25 @@ class AnalysisRequest(BaseModel):
     query: str = Field(..., description="Natural language query with tickers and analysis request")
     max_iterations: Optional[int] = Field(3, description="Maximum iterations per agent")
     timeout_seconds: Optional[int] = Field(30, description="Timeout for the entire analysis")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID for follow-up interactions")
+    confirmation_response: Optional[str] = Field(None, description="User's response to a confirmation prompt")
+
+
+class CorrectionSuggestion(BaseModel):
+    """Suggestion for correcting a misspelled company name."""
+    original_input: str = Field(..., description="The original user input")
+    corrected_name: str = Field(..., description="The corrected company name")
+    ticker: str = Field(..., description="The stock ticker symbol")
+    confidence: str = Field(..., description="Confidence level (high, medium, low)")
+    explanation: str = Field(..., description="Explanation of the correction")
+
+
+class ConfirmationPrompt(BaseModel):
+    """Prompt for user confirmation of a correction."""
+    type: str = Field(..., description="Type of prompt (confirmation, selection, clarification)")
+    message: str = Field(..., description="Message to display to the user")
+    suggestion: Optional[CorrectionSuggestion] = Field(None, description="Correction suggestion")
+    conversation_id: str = Field(..., description="Conversation ID for follow-up")
 
 
 class AnalysisResponse(BaseModel):
@@ -114,6 +133,10 @@ class AnalysisResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="Any warnings during analysis")
     errors: List[str] = Field(default_factory=list, description="Any errors during analysis")
     
+    # Confirmation flow
+    needs_confirmation: bool = Field(False, description="Whether user confirmation is needed")
+    confirmation_prompt: Optional[ConfirmationPrompt] = Field(None, description="Confirmation prompt if needed")
+    
     # Timestamps
     started_at: datetime = Field(..., description="Analysis start time")
     completed_at: datetime = Field(..., description="Analysis completion time")
@@ -126,3 +149,4 @@ class AnalysisStatus(BaseModel):
     progress: float = Field(..., description="Progress percentage (0-100)")
     current_step: Optional[str] = Field(None, description="Current processing step")
     estimated_completion: Optional[datetime] = Field(None, description="Estimated completion time")
+
