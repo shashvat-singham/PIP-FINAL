@@ -229,7 +229,8 @@ class YahooFinanceOrchestrator:
         query: str, 
         max_iterations: int = 3, 
         timeout_seconds: int = 60,
-        request_id: str = ""
+        request_id: str = "",
+        confirmed_tickers: Optional[List[str]] = None
     ) -> List[TickerInsight]:
         """
         Run stock analysis workflow using Yahoo Finance and Gemini AI.
@@ -239,6 +240,7 @@ class YahooFinanceOrchestrator:
             max_iterations: Maximum iterations per agent
             timeout_seconds: Timeout for the entire analysis
             request_id: Unique request identifier
+            confirmed_tickers: Pre-confirmed tickers to analyze (skips extraction)
             
         Returns:
             List of ticker insights
@@ -250,8 +252,14 @@ class YahooFinanceOrchestrator:
                    request_id=request_id)
         
         try:
-            # Extract tickers from query
-            tickers, unresolved_names = self._extract_tickers(query)
+            # Use confirmed tickers if provided, otherwise extract from query
+            if confirmed_tickers:
+                tickers = confirmed_tickers
+                unresolved_names = []
+                logger.info("Using confirmed tickers", tickers=tickers, request_id=request_id)
+            else:
+                # Extract tickers from query
+                tickers, unresolved_names = self._extract_tickers(query)
             
             if not tickers and unresolved_names:
                 # Return information about unresolved names for conversation manager

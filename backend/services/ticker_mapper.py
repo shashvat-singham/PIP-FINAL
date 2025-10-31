@@ -268,7 +268,8 @@ class TickerMapper:
             "BACK", "AFTER", "USE", "TWO", "HOW", "WORK", "FIRST", "WELL", 
             "WAY", "EVEN", "NEW", "WANT", "BECAUSE", "ANY", "THESE", "GIVE", "DAY", 
             "MOST", "US", "BEST", "AI", "OR", "TO", "FROM", "AS", "AT", "BY", "IN", "ON",
-            "ANALYZE", "COMPARE", "RESEARCH", "MONTH", "MONTHS", "WEEK", "WEEKS", "YEAR", "YEARS"
+            "ANALYZE", "COMPARE", "RESEARCH", "MONTH", "MONTHS", "WEEK", "WEEKS", "YEAR", "YEARS",
+            "FOR", "WITH", "DURING", "OVER"
         }
         
         resolved_tickers = [t for t in potential_tickers if t not in common_words]

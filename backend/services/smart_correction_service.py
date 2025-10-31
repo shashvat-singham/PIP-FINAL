@@ -1,10 +1,11 @@
 """
 Smart Correction Service - Uses Gemini AI to detect and correct misspelled company names.
+Supports multiple misspellings in a single query.
 """
 import google.generativeai as genai
 import json
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import structlog
 from dotenv import load_dotenv
 
@@ -16,6 +17,7 @@ logger = structlog.get_logger()
 class SmartCorrectionService:
     """
     Service for detecting and correcting misspelled company names using Gemini AI.
+    Handles multiple misspellings in a single query.
     """
     
     def __init__(self, api_key: Optional[str] = None):
@@ -36,56 +38,71 @@ class SmartCorrectionService:
         
         logger.info("SmartCorrectionService initialized")
     
-    def detect_and_correct(self, user_input: str) -> Dict[str, Any]:
+    def detect_and_correct_multiple(self, user_input: str) -> Dict[str, Any]:
         """
-        Detect if the user input contains a misspelled company name and suggest corrections.
+        Detect if the user input contains misspelled company names and suggest corrections.
+        Handles MULTIPLE misspellings in a single query.
         
         Args:
-            user_input: The user's input text (e.g., "matae" or "analyze metae for 1 month")
+            user_input: The user's input text (e.g., "analyze metae Apple and TSLAA")
             
         Returns:
             Dictionary containing:
-            - is_misspelled: bool - Whether a misspelling was detected
+            - has_misspellings: bool - Whether any misspellings were detected
             - original_input: str - The original user input
-            - corrected_name: str - The corrected company name (if found)
-            - ticker: str - The stock ticker symbol (if found)
-            - confidence: str - Confidence level (high, medium, low)
-            - explanation: str - Brief explanation of the correction
+            - corrections: List[Dict] - List of corrections, each with:
+                - original: str - The misspelled text
+                - corrected_name: str - The corrected company name
+                - ticker: str - The stock ticker symbol
+                - confidence: str - Confidence level (high, medium, low)
+                - explanation: str - Brief explanation
         """
         prompt = f"""You are a financial assistant that helps users identify company names and stock tickers.
 
 USER INPUT: "{user_input}"
 
 TASK:
-Analyze the user input and determine if it contains a misspelled or ambiguous company name. If so, identify the most likely correct company name and its stock ticker symbol.
+Analyze the ENTIRE user input and identify ALL misspelled or ambiguous company names/tickers. Return corrections for EVERY misspelling found, not just the first one.
 
 RULES:
-1. Look for company names or partial names that might be misspelled
+1. Look for ALL company names or tickers that might be misspelled
 2. Consider common typos, missing letters, extra letters, or phonetic similarities
 3. Only suggest corrections for well-known publicly traded companies
-4. If the input already contains a valid ticker (e.g., "AAPL", "MSFT"), mark is_misspelled as false
-5. If the input contains a correctly spelled company name, mark is_misspelled as false
-6. Be confident in your suggestions - only suggest corrections when you're reasonably sure
+4. If a word is correctly spelled or is a valid ticker, do NOT include it in corrections
+5. Return ALL corrections in a single response
 
 EXAMPLES:
-- "matae" → Meta Platforms Inc. (META)
-- "metae" → Meta Platforms Inc. (META)
-- "microsft" → Microsoft Corporation (MSFT)
-- "gogle" → Alphabet Inc. (GOOGL)
-- "analyze apple for 1 month" → No correction needed (correctly spelled)
-- "AAPL" → No correction needed (valid ticker)
-- "analyze NVDA and AMD" → No correction needed (valid tickers)
+Input: "analyze metae Apple and TSLAA"
+Output: Should detect TWO misspellings:
+  - "metae" → Meta Platforms Inc. (META)
+  - "TSLAA" → Tesla Inc. (TSLA)
+  - "Apple" is correct, so not included
+
+Input: "compare microsft gogle and amazn"
+Output: Should detect THREE misspellings:
+  - "microsft" → Microsoft Corporation (MSFT)
+  - "gogle" → Alphabet Inc. (GOOGL)
+  - "amazn" → Amazon.com Inc. (AMZN)
+
+Input: "analyze AAPL MSFT and GOOGL"
+Output: No misspellings (all valid tickers)
 
 Respond in JSON format:
 {{
-    "is_misspelled": true or false,
+    "has_misspellings": true or false,
     "original_input": "the exact user input",
-    "corrected_name": "Full Company Name" or null,
-    "ticker": "TICKER" or null,
-    "confidence": "high, medium, or low",
-    "explanation": "Brief explanation of why you think this is/isn't a misspelling"
+    "corrections": [
+        {{
+            "original": "misspelled text",
+            "corrected_name": "Full Company Name",
+            "ticker": "TICKER",
+            "confidence": "high, medium, or low",
+            "explanation": "Brief explanation"
+        }}
+    ]
 }}
 
+If no misspellings found, return empty corrections array.
 Respond with ONLY the JSON, no additional text."""
 
         try:
@@ -102,9 +119,8 @@ Respond with ONLY the JSON, no additional text."""
             
             logger.info("Smart correction analysis completed",
                        user_input=user_input,
-                       is_misspelled=result.get('is_misspelled'),
-                       corrected_name=result.get('corrected_name'),
-                       ticker=result.get('ticker'))
+                       has_misspellings=result.get('has_misspellings'),
+                       corrections_count=len(result.get('corrections', [])))
             
             return result
             
@@ -115,12 +131,43 @@ Respond with ONLY the JSON, no additional text."""
             
             # Return a safe fallback
             return {
-                "is_misspelled": False,
+                "has_misspellings": False,
                 "original_input": user_input,
+                "corrections": []
+            }
+    
+    def detect_and_correct(self, user_input: str) -> Dict[str, Any]:
+        """
+        Legacy method for backward compatibility.
+        Detects the FIRST misspelling only.
+        
+        Args:
+            user_input: The user's input text
+            
+        Returns:
+            Dictionary with single correction (legacy format)
+        """
+        result = self.detect_and_correct_multiple(user_input)
+        
+        if result.get('has_misspellings') and result.get('corrections'):
+            # Return first correction in legacy format
+            first_correction = result['corrections'][0]
+            return {
+                "is_misspelled": True,
+                "original_input": result['original_input'],
+                "corrected_name": first_correction['corrected_name'],
+                "ticker": first_correction['ticker'],
+                "confidence": first_correction['confidence'],
+                "explanation": first_correction['explanation']
+            }
+        else:
+            return {
+                "is_misspelled": False,
+                "original_input": result['original_input'],
                 "corrected_name": None,
                 "ticker": None,
-                "confidence": "low",
-                "explanation": f"Unable to analyze input due to error: {str(e)}"
+                "confidence": "high",
+                "explanation": "No misspellings detected"
             }
     
     def generate_confirmation_message(self, correction_result: Dict[str, Any]) -> str:
@@ -149,6 +196,35 @@ Respond with ONLY the JSON, no additional text."""
                 return f"Did you possibly mean **{corrected_name}** ({ticker})? (I'm not very confident about this)"
         
         return None
+    
+    def generate_multiple_corrections_message(self, corrections: List[Dict[str, Any]]) -> str:
+        """
+        Generate a user-friendly message for multiple corrections.
+        
+        Args:
+            corrections: List of correction dictionaries
+            
+        Returns:
+            Formatted message string
+        """
+        if not corrections:
+            return None
+        
+        if len(corrections) == 1:
+            correction = corrections[0]
+            return f"Did you mean **{correction['corrected_name']}** ({correction['ticker']})?"
+        
+        # Multiple corrections
+        corrections_list = []
+        for i, correction in enumerate(corrections, 1):
+            corrections_list.append(
+                f"{i}. '{correction['original']}' → **{correction['corrected_name']}** ({correction['ticker']})"
+            )
+        
+        message = "I found multiple potential misspellings:\n\n" + "\n".join(corrections_list)
+        message += "\n\nDid you mean these corrections?"
+        
+        return message
 
 
 # Global instance

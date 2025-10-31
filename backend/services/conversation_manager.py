@@ -257,23 +257,22 @@ class ConversationManager:
         
         response_lower = response.lower().strip()
         
-        # Handle "Yes" response
+        # Handle "Yes" response - confirm ALL tickers at once
         if response_lower in ["yes", "y", "yeah", "yep", "sure", "correct"]:
-            if conversation.pending_confirmations:
-                ticker = conversation.pending_confirmations[0]["ticker"]
-                conversation.resolved_tickers.append(ticker)
-                conversation.pending_confirmations = []
-                conversation.state = ConversationState.READY_FOR_ANALYSIS
-                
-                logger.info("User confirmed suggestion",
-                           conversation_id=conversation.conversation_id,
-                           ticker=ticker)
-                
-                return {
-                    "status": "confirmed",
-                    "ticker": ticker,
-                    "message": f"Great! I'll analyze {ticker}."
-                }
+            # All tickers are already in confirmed_tickers from the initial detection
+            conversation.state = ConversationState.READY_FOR_ANALYSIS
+            
+            tickers = getattr(conversation, 'confirmed_tickers', [])
+            
+            logger.info("User confirmed all suggestions",
+                       conversation_id=conversation.conversation_id,
+                       tickers=tickers)
+            
+            return {
+                "status": "confirmed",
+                "ticker": ", ".join(tickers) if tickers else "unknown",
+                "message": f"Great! I'll analyze {', '.join(tickers)}."
+            }
         
         # Handle "No" response
         elif response_lower in ["no", "n", "nope", "incorrect"]:

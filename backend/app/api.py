@@ -1,10 +1,11 @@
 """
 API routes for the Stock Research Chatbot.
+Enhanced with multi-correction support - ALL corrections in ONE response.
 """
 import uuid
 import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -41,6 +42,7 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
     
     This endpoint triggers the multi-agent research process for the specified stocks.
     Includes smart correction for misspelled company names using Gemini AI.
+    ALL corrections are presented in a SINGLE response - no multiple confirmations.
     """
     request_id = str(uuid.uuid4())
     start_time = time.time()
@@ -57,6 +59,9 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
         conversation_manager = get_conversation_manager()
         smart_correction_service = get_smart_correction_service()
         
+        tickers = []
+        unresolved_names = []
+        
         # Handle follow-up confirmation responses
         if request.conversation_id and request.confirmation_response:
             conversation = conversation_manager.get_conversation(request.conversation_id)
@@ -67,14 +72,15 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                 )
                 
                 if response_result["status"] == "confirmed":
-                    # User confirmed, proceed with analysis using the confirmed ticker
-                    ticker = response_result["ticker"]
-                    tickers = [ticker]
+                    # User confirmed ALL corrections at once
+                    logger.info("User confirmed all corrections",
+                               conversation_id=request.conversation_id,
+                               confirmed_tickers=conversation.confirmed_tickers)
+                    
+                    # Use confirmed tickers for analysis
+                    tickers = conversation.confirmed_tickers
                     unresolved_names = []
                     
-                    logger.info("User confirmed correction",
-                               conversation_id=request.conversation_id,
-                               ticker=ticker)
                 elif response_result["status"] == "rejected":
                     # User rejected, ask for clarification
                     return AnalysisResponse(
@@ -98,39 +104,48 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
             else:
                 logger.warning("Conversation not found or expired",
                               conversation_id=request.conversation_id)
-                # Treat as new query
-                request.conversation_id = None
+                raise HTTPException(status_code=400, detail="Conversation expired. Please start a new query.")
         
         # If not a follow-up, process as new query
         if not request.conversation_id or not request.confirmation_response:
-            # First, try smart correction with Gemini
+            # First, try smart correction with Gemini (supports MULTIPLE corrections)
             if smart_correction_service:
                 try:
-                    correction_result = smart_correction_service.detect_and_correct(request.query)
+                    correction_result = smart_correction_service.detect_and_correct_multiple(request.query)
                     
-                    if correction_result.get('is_misspelled') and correction_result.get('ticker'):
+                    if correction_result.get('has_misspellings') and correction_result.get('corrections'):
+                        corrections = correction_result.get('corrections', [])
+                        
                         # Create a conversation for confirmation
                         conversation = conversation_manager.create_conversation(request_id)
                         conversation.original_query = request.query
                         
-                        # Store the correction suggestion
-                        conversation.pending_confirmations = [{
-                            "company": correction_result.get('corrected_name'),
-                            "ticker": correction_result.get('ticker'),
-                            "confidence": correction_result.get('confidence')
-                        }]
+                        # Store ALL confirmed tickers at once
+                        conversation.confirmed_tickers = [corr['ticker'] for corr in corrections]
                         
-                        # Generate confirmation message
-                        confirmation_message = smart_correction_service.generate_confirmation_message(
-                            correction_result
-                        )
+                        # Build a SINGLE confirmation message for ALL corrections
+                        if len(corrections) == 1:
+                            first_correction = corrections[0]
+                            confirmation_message = f"Did you mean **{first_correction['corrected_name']}** ({first_correction['ticker']})?"
+                        else:
+                            # Multiple corrections - show all at once
+                            corrections_list = []
+                            for i, corr in enumerate(corrections, 1):
+                                corrections_list.append(
+                                    f"{i}. '{corr['original']}' → **{corr['corrected_name']}** ({corr['ticker']})"
+                                )
+                            
+                            confirmation_message = (
+                                f"I found {len(corrections)} potential misspellings:\n\n" +
+                                "\n".join(corrections_list) +
+                                "\n\nDid you mean these corrections?"
+                            )
                         
-                        logger.info("Smart correction detected misspelling",
+                        logger.info("Smart correction detected misspellings - presenting ALL at once",
                                    original=correction_result.get('original_input'),
-                                   corrected=correction_result.get('corrected_name'),
-                                   ticker=correction_result.get('ticker'))
+                                   corrections_count=len(corrections))
                         
-                        # Return confirmation prompt
+                        # Return confirmation prompt for ALL corrections at once
                         return AnalysisResponse(
                             request_id=request_id,
                             query=request.query,
@@ -146,11 +161,11 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                                 type="confirmation",
                                 message=confirmation_message,
                                 suggestion=CorrectionSuggestion(
-                                    original_input=correction_result.get('original_input'),
-                                    corrected_name=correction_result.get('corrected_name'),
-                                    ticker=correction_result.get('ticker'),
-                                    confidence=correction_result.get('confidence'),
-                                    explanation=correction_result.get('explanation')
+                                    original_input=request.query,
+                                    corrected_name=", ".join([c['corrected_name'] for c in corrections]),
+                                    ticker=", ".join([c['ticker'] for c in corrections]),
+                                    confidence=corrections[0].get('confidence', 'medium'),
+                                    explanation=f"Found {len(corrections)} potential misspelling(s)"
                                 ),
                                 conversation_id=request_id
                             )
@@ -159,235 +174,86 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                     logger.warning("Smart correction failed, falling back to traditional method",
                                   error=str(e))
             
-            # Fallback to traditional ticker extraction
-            tickers, unresolved_names = ticker_mapper.extract_tickers_from_query(request.query)
-            
-            # If there are unresolved names, check for suggestions using fuzzy matching
-            if unresolved_names:
-                for name in unresolved_names:
-                    suggestions = ticker_mapper.find_suggestions(name, n=3)
-                    if suggestions:
-                        # Create conversation for confirmation
-                        conversation = conversation_manager.create_conversation(request_id)
-                        conversation.original_query = request.query
-                        confirmation_prompt = conversation_manager.create_confirmation_prompt(
-                            conversation, suggestions
-                        )
-                        
-                        logger.info("Fuzzy matching found suggestions",
-                                   name=name,
-                                   suggestions_count=len(suggestions))
-                        
-                        # Return confirmation request
-                        return AnalysisResponse(
-                            request_id=request_id,
-                            query=request.query,
-                            insights=[],
-                            total_latency_ms=(time.time() - start_time) * 1000,
-                            tickers_analyzed=[],
-                            agents_used=[],
-                            started_at=started_at,
-                            completed_at=datetime.now(),
-                            success=False,
-                            needs_confirmation=True,
-                            confirmation_prompt=ConfirmationPrompt(
-                                type=confirmation_prompt["type"],
-                                message=confirmation_prompt["message"],
-                                suggestion=CorrectionSuggestion(
-                                    original_input=name,
-                                    corrected_name=suggestions[0][0],
-                                    ticker=suggestions[0][1],
-                                    confidence="medium",
-                                    explanation="Found using fuzzy matching"
-                                ) if len(suggestions) == 1 else None,
-                                conversation_id=request_id
-                            )
-                        )
+            # If no misspellings detected or smart correction failed, extract tickers normally
+            if not tickers:
+                tickers, unresolved_names = ticker_mapper.extract_tickers_from_query(request.query)
         
-        # If we get here, we have valid tickers to analyze
+        # Validate tickers
         if not tickers:
-            raise ValueError("No valid stock tickers found in query. Please provide company names or ticker symbols.")
+            raise HTTPException(
+                status_code=400,
+                detail="No valid stock tickers found in query. Please specify at least one ticker or company name."
+            )
         
-        # Update status
-        analysis_status_store[request_id] = {
-            "status": "processing",
-            "progress": 0.0,
-            "current_step": "Initializing analysis with Yahoo Finance",
-            "started_at": started_at
-        }
+        logger.info("Extracted tickers", tickers=tickers)
         
-        # Run the analysis
-        insights = await orchestrator.analyze(
+        # Execute orchestrated analysis
+        # Pass confirmed tickers directly if available to avoid re-extraction
+        results = await orchestrator.analyze(
             query=request.query,
-            max_iterations=request.max_iterations or 3,
-            timeout_seconds=request.timeout_seconds or 60,
-            request_id=request_id
+            max_iterations=request.max_iterations,
+            timeout_seconds=request.timeout_seconds,
+            request_id=request_id,
+            confirmed_tickers=tickers if tickers else None
         )
         
-        # Calculate execution time
-        end_time = time.time()
-        total_latency_ms = (end_time - start_time) * 1000
-        
-        # Extract tickers and agents used
-        tickers_analyzed = [insight.ticker for insight in insights]
-        agents_used = list(set([
-            trace.agent_type 
-            for insight in insights 
-            for trace in insight.agent_traces
-        ]))
-        
-        # Format response with 2 decimal places
-        response_data = {
+        # Prepare response dict and format numeric fields
+        insights_list = [insight.model_dump() for insight in results]
+        # Collect agents used from each insight's agent_traces
+        agents_used_set = set()
+        for insight in insights_list:
+            for trace in insight.get('agent_traces', []) or []:
+                agent_type = trace.get('agent_type')
+                if agent_type:
+                    agents_used_set.add(agent_type)
+
+        response_dict = {
             "request_id": request_id,
             "query": request.query,
-            "insights": [insight.model_dump() for insight in insights],
-            "total_latency_ms": total_latency_ms,
-            "tickers_analyzed": tickers_analyzed,
-            "agents_used": agents_used,
+            "insights": insights_list,
+            "total_latency_ms": (time.time() - start_time) * 1000,
+            "tickers_analyzed": [insight.ticker for insight in results],
+            "agents_used": sorted(list(agents_used_set)),
             "started_at": started_at,
-            "completed_at": datetime.now()
+            "completed_at": datetime.now(),
+            "success": True,
         }
+
+        formatted = format_analysis_response(response_dict)
+
+        logger.info("Stock analysis completed",
+                   request_id=request_id,
+                   tickers_count=len(results))
+
+        # Return a validated AnalysisResponse model
+        return AnalysisResponse(**formatted)
         
-        formatted_response = format_analysis_response(response_data)
-        response = AnalysisResponse(**formatted_response)
-        
-        # Update final status
-        analysis_status_store[request_id] = {
-            "status": "completed",
-            "progress": 100.0,
-            "current_step": "Analysis complete",
-            "completed_at": datetime.now()
-        }
-        
-        logger.info("Stock analysis completed", 
-                    request_id=request_id,
-                    tickers_count=len(tickers_analyzed),
-                    latency_ms=total_latency_ms)
-        
-        return response
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Stock analysis failed", 
-                     request_id=request_id, 
-                     error=str(e))
-        
-        # Update error status
-        analysis_status_store[request_id] = {
-            "status": "failed",
-            "progress": 0.0,
-            "current_step": f"Error: {str(e)}",
-            "error": str(e)
-        }
-        
-        if "No valid stock tickers found in query" in str(e):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Validation Error: {str(e)}"
-            )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Analysis failed: {str(e)}"
-            )
-
-
-
-@router.get("/analyze/{request_id}/status", response_model=AnalysisStatus)
-async def get_analysis_status(request_id: str) -> AnalysisStatus:
-    """Get the status of an ongoing analysis."""
-    if request_id not in analysis_status_store:
+                    request_id=request_id,
+                    error=str(e))
         raise HTTPException(
-            status_code=404,
-            detail="Analysis request not found"
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}"
         )
-    
-    status_data = analysis_status_store[request_id]
-    
-    return AnalysisStatus(
-        request_id=request_id,
-        status=status_data["status"],
-        progress=status_data["progress"],
-        current_step=status_data.get("current_step"),
-        estimated_completion=status_data.get("estimated_completion")
-    )
 
 
-@router.get("/analyze/{request_id}")
-async def get_analysis_result(request_id: str) -> Dict[str, Any]:
-    """Get the result of a completed analysis."""
+@router.get("/status/{request_id}")
+async def get_analysis_status(request_id: str) -> Dict[str, Any]:
+    """Get the status of an analysis request."""
     if request_id not in analysis_status_store:
-        raise HTTPException(
-            status_code=404,
-            detail="Analysis request not found"
-        )
+        raise HTTPException(status_code=404, detail="Request not found")
     
-    status_data = analysis_status_store[request_id]
-    
-    if status_data["status"] != "completed":
-        return {
-            "request_id": request_id,
-            "status": status_data["status"],
-            "message": "Analysis not yet completed"
-        }
-    
-    # In a real implementation, you'd retrieve the full result from storage
+    return analysis_status_store[request_id]
+
+
+@router.get("/health")
+async def health_check() -> Dict[str, Any]:
+    """Health check endpoint."""
     return {
-        "request_id": request_id,
-        "status": "completed",
-        "message": "Analysis completed successfully"
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "stock-research-chatbot"
     }
-
-
-@router.delete("/analyze/{request_id}")
-async def cancel_analysis(request_id: str) -> Dict[str, str]:
-    """Cancel an ongoing analysis."""
-    if request_id not in analysis_status_store:
-        raise HTTPException(
-            status_code=404,
-            detail="Analysis request not found"
-        )
-    
-    # Update status to cancelled
-    analysis_status_store[request_id]["status"] = "cancelled"
-    analysis_status_store[request_id]["current_step"] = "Analysis cancelled by user"
-    
-    logger.info("Analysis cancelled", request_id=request_id)
-    
-    return {
-        "request_id": request_id,
-        "message": "Analysis cancelled successfully"
-    }
-
-
-@router.get("/agents")
-async def list_available_agents() -> Dict[str, Any]:
-    """List all available research agents and their capabilities."""
-    return {
-        "agents": [
-            {
-                "type": "news",
-                "description": "Fetches and analyzes recent news from Yahoo Finance",
-                "capabilities": ["yahoo_finance_news", "news_summarization", "sentiment_analysis"]
-            },
-            {
-                "type": "price",
-                "description": "Analyzes price movements and technical indicators from Yahoo Finance",
-                "capabilities": ["price_analysis", "technical_indicators", "support_resistance"]
-            },
-            {
-                "type": "synthesis",
-                "description": "Synthesizes all data using Gemini AI to generate investment recommendations",
-                "capabilities": ["ai_analysis", "investment_rationale", "risk_assessment"]
-            }
-        ],
-        "data_sources": [
-            "Yahoo Finance (real-time stock data and news)",
-            "Google Gemini AI (intelligent analysis and synthesis)"
-        ],
-        "features": [
-            "Smart spelling correction using Gemini AI",
-            "Interactive confirmation for ambiguous company names",
-            "Multi-company parallel analysis"
-        ]
-    }
-
