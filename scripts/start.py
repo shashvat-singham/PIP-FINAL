@@ -58,7 +58,7 @@ def start_react_frontend(mode):
 def start_streamlit_frontend():
     print_status("Starting Streamlit frontend...")
     frontend_dir = os.path.join(os.getcwd(), "frontend")
-    cmd = "streamlit run app.py --server.port 8501 --server.address 0.0.0.0"
+    cmd = "python -m streamlit run app.py --server.port 8501 --server.address 0.0.0.0"
     return run_command(cmd, cwd=frontend_dir, background=True)
 
 

@@ -197,36 +197,20 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
             confirmed_tickers=tickers if tickers else None
         )
         
-        # Prepare response dict and format numeric fields
-        insights_list = [insight.model_dump() for insight in results]
-        # Collect agents used from each insight's agent_traces
-        agents_used_set = set()
-        for insight in insights_list:
-            for trace in insight.get('agent_traces', []) or []:
-                agent_type = trace.get('agent_type')
-                if agent_type:
-                    agents_used_set.add(agent_type)
-
-        response_dict = {
-            "request_id": request_id,
-            "query": request.query,
-            "insights": insights_list,
-            "total_latency_ms": (time.time() - start_time) * 1000,
-            "tickers_analyzed": [insight.ticker for insight in results],
-            "agents_used": sorted(list(agents_used_set)),
-            "started_at": started_at,
-            "completed_at": datetime.now(),
-            "success": True,
-        }
-
-        formatted = format_analysis_response(response_dict)
-
-        logger.info("Stock analysis completed",
+        # Format response
+        response = format_analysis_response(
+            request_id=request_id,
+            query=request.query,
+            insights=results,
+            started_at=started_at,
+            total_latency_ms=(time.time() - start_time) * 1000
+        )
+        
+        logger.info("Stock analysis completed", 
                    request_id=request_id,
                    tickers_count=len(results))
-
-        # Return a validated AnalysisResponse model
-        return AnalysisResponse(**formatted)
+        
+        return response
         
     except HTTPException:
         raise
