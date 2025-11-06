@@ -163,30 +163,59 @@ def format_ticker_insight(insight: Dict[str, Any]) -> Dict[str, Any]:
     return formatted
 
 
-def format_analysis_response(response: Dict[str, Any]) -> Dict[str, Any]:
+def format_analysis_response(**kwargs) -> Dict[str, Any]:
     """
     Format all numeric fields in an analysis response to 2 decimal places.
     
     Args:
-        response: Analysis response dictionary
+        **kwargs: Analysis response fields (request_id, query, insights, started_at, total_latency_ms, etc.)
         
     Returns:
-        Formatted analysis response
+        Formatted analysis response as a dictionary
     """
-    formatted = response.copy()
+    from backend.app.models import AnalysisResponse
+    from datetime import datetime
     
     # Format total latency
-    if 'total_latency_ms' in formatted:
-        formatted['total_latency_ms'] = format_decimal(formatted['total_latency_ms'], 2)
+    total_latency_ms = kwargs.get('total_latency_ms', 0)
+    if total_latency_ms:
+        total_latency_ms = format_decimal(total_latency_ms, 2)
     
     # Format insights
-    if 'insights' in formatted and isinstance(formatted['insights'], list):
-        formatted['insights'] = [
-            format_ticker_insight(insight) 
-            for insight in formatted['insights']
+    insights = kwargs.get('insights', [])
+    if isinstance(insights, list):
+        formatted_insights = [
+            format_ticker_insight(insight) if hasattr(insight, 'ticker') else insight
+            for insight in insights
         ]
+    else:
+        formatted_insights = []
     
-    return formatted
+    # Extract tickers and agents from insights
+    tickers_analyzed = [insight.ticker if hasattr(insight, 'ticker') else insight.get('ticker', '') for insight in insights]
+    agents_used = list(set(
+        trace.agent_type if hasattr(trace, 'agent_type') else trace.get('agent_type', '')
+        for insight in insights
+        for trace in (insight.agent_traces if hasattr(insight, 'agent_traces') else insight.get('agent_traces', []))
+    ))
+    
+    # Create the response model
+    return AnalysisResponse(
+        request_id=kwargs.get('request_id', ''),
+        query=kwargs.get('query', ''),
+        insights=formatted_insights,
+        cross_ticker_analysis=kwargs.get('cross_ticker_analysis'),
+        total_latency_ms=total_latency_ms,
+        tickers_analyzed=tickers_analyzed,
+        agents_used=agents_used,
+        success=kwargs.get('success', True),
+        warnings=kwargs.get('warnings', []),
+        errors=kwargs.get('errors', []),
+        needs_confirmation=kwargs.get('needs_confirmation', False),
+        confirmation_prompt=kwargs.get('confirmation_prompt'),
+        started_at=kwargs.get('started_at', datetime.now()),
+        completed_at=kwargs.get('completed_at', datetime.now())
+    )
 
 
 def format_json_response(data: Any) -> Any:
