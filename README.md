@@ -1,6 +1,6 @@
-# 📊 Stock Research Chatbot v2.1
+# 📊 Stock Research Chatbot v3.0
 
-AI-powered multi-agent stock research platform with smart spelling correction, comprehensive analysis, and real-time market insights.
+AI-powered multi-agent stock research platform with professional-grade streaming logs, smart spelling correction, comprehensive analysis, and real-time market insights.
 
 [![Production Ready](https://img.shields.io/badge/status-production--ready-green)]()
 [![Docker](https://img.shields.io/badge/docker-enabled-blue)]()
@@ -10,18 +10,19 @@ AI-powered multi-agent stock research platform with smart spelling correction, c
 
 ## 🎯 Overview
 
-The Stock Research Chatbot is a production-grade AI system that provides comprehensive stock analysis using a multi-agent architecture powered by Google Gemini 2.5 Flash. It features intelligent typo correction, natural language understanding, and parallel research across multiple data sources.
+The Stock Research Chatbot is a production-grade AI system that provides comprehensive stock analysis using a multi-agent architecture powered by Google Gemini. It features intelligent typo correction, natural language understanding, and parallel research across multiple data sources, now with enhanced user-facing streaming logs for a professional experience.
 
 ### Key Features
 
-- **🤖 Gemini-Powered Smart Correction**: Automatically detects and corrects misspelled company names with interactive confirmation
-- **🔄 Multi-Misspelling Support**: Handles multiple typos in a single query with sequential confirmation
-- **🎯 Multi-Agent Research**: 6 specialized agents analyze news, prices, earnings, insider trading, patents, and SEC filings
-- **📊 Real-Time Data**: Live market data from Yahoo Finance API
-- **💡 AI-Driven Insights**: Comprehensive investment recommendations with confidence scores
-- **📝 Cited Sources**: All claims backed by URLs and publication dates
-- **🌐 Natural Language**: Accepts both company names and ticker symbols
-- **⚡ Parallel Processing**: Analyzes multiple companies simultaneously
+- **✨ Professional Streaming Logs**: Real-time, user-friendly status updates for each step of the analysis process.
+- **🤖 Gemini-Powered Smart Correction**: Automatically detects and corrects misspelled company names with interactive confirmation.
+- **🔄 Multi-Misspelling Support**: Handles multiple typos in a single query with a single confirmation step.
+- **🎯 Multi-Agent Research**: Specialized agents analyze news, prices, and financials, orchestrated for deep insights.
+- **📊 Real-Time Data**: Live market data from Yahoo Finance API.
+- **💡 AI-Driven Insights**: Comprehensive investment recommendations with confidence scores.
+- **📝 Cited Sources**: All claims backed by URLs and publication dates.
+- **🌐 Natural Language**: Accepts both company names and ticker symbols.
+- **⚡ Parallel Processing**: Analyzes multiple companies simultaneously.
 
 ---
 
@@ -95,12 +96,11 @@ npm run dev
 ```
 Input: "Analyze metae Apple and TSLAA"
 
-Bot: "I found 2 potential misspellings. Let's confirm them one by one.
-      Did you mean Meta Platforms Inc. (META)?"
-      
-You: "Yes"
+Bot: "I found 2 potential misspellings:
+      1. 'metae' -> **Meta Platforms Inc.** (META)
+      2. 'TSLAA' -> **Tesla Inc.** (TSLA)
 
-Bot: "Did you mean Tesla Inc. (TSLA)?"
+      Did you mean these corrections?"
 
 You: "Yes"
 
@@ -111,46 +111,13 @@ Bot: [Proceeds with analysis of META, AAPL, TSLA]
 
 ## 🏗️ Architecture
 
-For detailed architecture documentation, see **[ARCHITECTURE.md](./ARCHITECTURE.md)**
+For a detailed architecture diagram and explanation, please see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 
-### High-Level Overview
+---
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Frontend (React + Vite)                    │
-│  - Query Input  - Confirmation Dialogs  - Results Display   │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP/REST
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     FastAPI Backend                          │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  Smart Correction Service (Gemini AI)               │   │
-│  │  - Multi-misspelling detection                      │   │
-│  │  - Sequential confirmation                          │   │
-│  └──────────────────────┬───────────────────────────────┘   │
-│                         │                                    │
-│  ┌──────────────────────▼───────────────────────────────┐   │
-│  │  Multi-Agent Orchestrator                           │   │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐       │   │
-│  │  │  News  │ │ Price  │ │Earnings│ │Insider │       │   │
-│  │  │ Agent  │ │ Agent  │ │ Agent  │ │ Agent  │       │   │
-│  │  └────────┘ └────────┘ └────────┘ └────────┘       │   │
-│  │  ┌────────┐ ┌────────┐ ┌─────────────────┐         │   │
-│  │  │Patents │ │Filings │ │  Synthesis      │         │   │
-│  │  │ Agent  │ │ Agent  │ │  Agent          │         │   │
-│  │  └────────┘ └────────┘ └─────────────────┘         │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-        ▼                ▼                ▼
-┌──────────────┐  ┌──────────┐  ┌──────────────┐
-│Yahoo Finance │  │  Gemini  │  │   Ticker     │
-│     API      │  │   API    │  │  Database    │
-└──────────────┘  └──────────┘  └──────────────┘
-```
+## 🌊 Code Flow
+
+For a detailed explanation of how the code works and how data flows between files, please see **[CODE_FLOW.md](./CODE_FLOW.md)**.
 
 ---
 
@@ -165,16 +132,13 @@ http://localhost:8000/api/v1
 
 #### POST `/analyze`
 
-Analyzes stocks based on natural language query.
+Analyzes stocks based on a natural language query.
 
 **Request:**
 ```json
 {
   "query": "Analyze AAPL for 1 month",
-  "max_iterations": 3,
-  "timeout_seconds": 60,
-  "conversation_id": "optional-uuid",
-  "confirmation_response": "Yes"
+  "request_id": "optional-uuid"
 }
 ```
 
@@ -184,62 +148,14 @@ Analyzes stocks based on natural language query.
   "request_id": "uuid",
   "query": "Analyze AAPL for 1 month",
   "success": true,
-  "insights": [
-    {
-      "ticker": "AAPL",
-      "company_name": "Apple Inc.",
-      "stance": "buy",
-      "confidence": "high",
-      "summary": "Strong buy recommendation...",
-      "rationale": "Apple shows strong fundamentals...",
-      "key_drivers": ["iPhone sales growth", "Services revenue"],
-      "risks": ["Regulatory challenges", "Supply chain"],
-      "catalysts": ["AI integration", "New products"],
-      "current_price": 175.43,
-      "market_cap": 2750000000000.00,
-      "pe_ratio": 28.50,
-      "sources": [...]
-    }
-  ],
-  "tickers_analyzed": ["AAPL"],
-  "agents_used": ["news", "price", "earnings", "synthesis"],
-  "total_latency_ms": 5234.56
-}
-```
-
-**Response (Confirmation Needed):**
-```json
-{
-  "request_id": "uuid",
-  "success": false,
-  "needs_confirmation": true,
-  "confirmation_prompt": {
-    "type": "confirmation",
-    "message": "Did you mean Meta Platforms Inc. (META)?",
-    "suggestion": {
-      "original_input": "metae",
-      "corrected_name": "Meta Platforms Inc.",
-      "ticker": "META",
-      "confidence": "high",
-      "explanation": "Detected likely misspelling"
-    },
-    "conversation_id": "uuid"
-  }
+  "insights": [...],
+  "..."
 }
 ```
 
 #### GET `/health`
 
-Returns service health status.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2025-10-24T10:30:00Z",
-  "service": "stock-research-chatbot"
-}
-```
+Returns the health status of the service.
 
 ---
 
@@ -253,26 +169,11 @@ pip install -r requirements.txt
 
 # Run all tests
 GEMINI_API_KEY=your_key pytest tests/ -v
-
-# Run specific test
-GEMINI_API_KEY=your_key pytest tests/test_smart_correction.py -v
-
-# With coverage
-GEMINI_API_KEY=your_key pytest tests/ --cov=backend
 ```
 
 ### Postman Integration Tests
 
-```bash
-# Import collection and environment from postman/ directory
-# Or use Newman CLI:
-
-npm install -g newman
-newman run postman/Stock_Research_Chatbot.postman_collection.json \
-  -e postman/Stock_Research_Chatbot.postman_environment.json
-```
-
-See **[postman/POSTMAN_TESTING_GUIDE.md](./postman/POSTMAN_TESTING_GUIDE.md)** for detailed testing instructions.
+Import the collection and environment from the `postman/` directory into Postman to run integration tests against a running server.
 
 ---
 
@@ -290,12 +191,9 @@ Optional:
 ENVIRONMENT=production
 LOG_LEVEL=INFO
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-MAX_CONCURRENT_AGENTS=6
-REQUEST_TIMEOUT=60
-CONVERSATION_TTL=1800
 ```
 
-See **[.env.template](./.env.template)** for all available options.
+See **`.env.template`** for all available options.
 
 ---
 
@@ -305,19 +203,12 @@ See **[.env.template](./.env.template)** for all available options.
 stock-research-chatbot/
 ├── README.md                          # This file
 ├── ARCHITECTURE.md                    # Detailed architecture documentation
+├── CODE_FLOW.md                       # Detailed code flow explanation
 ├── docker-compose.yml                 # Docker orchestration
 ├── .env.template                      # Environment template
 │
 ├── backend/
 │   ├── agents/                        # Multi-agent system
-│   │   ├── base_agent.py
-│   │   ├── news_agent.py
-│   │   ├── price_agent.py
-│   │   ├── earnings_agent.py
-│   │   ├── insider_agent.py
-│   │   ├── patents_agent.py
-│   │   ├── filings_agent.py
-│   │   ├── synthesis_agent.py
 │   │   └── yahoo_finance_orchestrator.py
 │   ├── app/
 │   │   ├── main.py                    # FastAPI app
@@ -326,178 +217,44 @@ stock-research-chatbot/
 │   ├── services/
 │   │   ├── smart_correction_service.py  # Gemini correction
 │   │   ├── conversation_manager.py      # State management
-│   │   └── ticker_mapper.py             # Ticker mapping
+│   │   ├── ticker_mapper.py             # Ticker mapping
+│   │   └── log_broadcaster.py           # Professional streaming logs
 │   ├── config/
 │   │   └── settings.py
-│   ├── utils/
-│   │   └── formatters.py
+│   ├── tools/
+│   │   └── yahoo_finance_tool.py
 │   ├── tests/
-│   │   └── test_smart_correction.py
 │   ├── requirements.txt
 │   └── Dockerfile
 │
 ├── frontend/
 │   └── stock-research-ui/
 │       ├── src/
-│       │   ├── App.jsx                # Main component
-│       │   ├── components/
-│       │   └── main.jsx
 │       ├── package.json
-│       ├── Dockerfile
-│       └── nginx.conf
+│       └── Dockerfile
 │
 └── postman/
-    ├── Stock_Research_Chatbot.postman_collection.json
-    ├── Stock_Research_Chatbot.postman_environment.json
-    └── POSTMAN_TESTING_GUIDE.md
+    └── Stock_Research_Chatbot.postman_collection.json
 ```
 
 ---
 
 ## 🚀 Deployment
 
-### Production Deployment
+To deploy the application to a production environment, you can use the provided Docker setup. Ensure you have Docker and Docker Compose installed on your server.
 
-```bash
-# 1. Set environment variables
-export GEMINI_API_KEY=your_key
-export ENVIRONMENT=production
-export CORS_ORIGINS=https://yourdomain.com
+1.  **Set Environment Variables**: Create a `.env` file on your server with the production configurations. At a minimum, you need to set `GEMINI_API_KEY` and `CORS_ORIGINS` to your frontend's domain.
 
-# 2. Build and run
-docker-compose up -d --build
+2.  **Build and Run**: Use `docker-compose` to build and run the services in detached mode:
 
-# 3. Verify
-docker-compose ps
-docker-compose logs -f
-```
+    ```bash
+    docker-compose up -d --build
+    ```
 
-### Scaling
+3.  **Verify**: Check the status of the running containers:
 
-```bash
-# Scale backend replicas
-docker-compose up -d --scale backend=3
-```
+    ```bash
+    docker-compose ps
+    ```
 
-### Health Monitoring
-
-```bash
-# Backend health
-curl http://localhost:8000/api/v1/health
-
-# Frontend health
-curl http://localhost:3000
-
-# View logs
-docker-compose logs -f backend
-docker-compose logs -f frontend
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Issue: Smart correction not working
-
-**Solution:**
-```bash
-# Check if GEMINI_API_KEY is set
-echo $GEMINI_API_KEY
-
-# Check backend logs
-docker-compose logs backend | grep GEMINI
-```
-
-### Issue: Frontend can't connect to backend
-
-**Solution:**
-- Verify backend is running: `curl http://localhost:8000/api/v1/health`
-- Check CORS settings in `backend/app/main.py`
-- Ensure ports 3000 and 8000 are not blocked
-
-### Issue: Docker build fails
-
-**Solution:**
-```bash
-# Clean Docker cache
-docker-compose down
-docker system prune -a
-docker-compose up --build
-```
-
-### Issue: "Internal Server Error" after confirmation
-
-**Solution:**
-- Check backend logs: `docker-compose logs backend`
-- Verify GEMINI_API_KEY is valid
-- Ensure conversation hasn't expired (30-minute TTL)
-
----
-
-## 📊 Performance
-
-- **Average Response Time**: 3-8 seconds per ticker
-- **Smart Correction Overhead**: +500-1000ms (only when misspelling detected)
-- **Concurrent Requests**: Supported
-- **Conversation TTL**: 30 minutes
-- **Max Concurrent Agents**: 6 (configurable)
-
----
-
-## 🔒 Security
-
-- **API Key Protection**: Never commit `.env` to version control
-- **CORS Configuration**: Configure allowed origins for production
-- **Non-root Containers**: Docker containers run as non-root users
-- **Input Validation**: All inputs validated using Pydantic models
-- **Rate Limiting**: Implement in production (not included by default)
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-## 📞 Support
-
-- **Documentation**: See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed technical documentation
-- **Testing Guide**: See [postman/POSTMAN_TESTING_GUIDE.md](./postman/POSTMAN_TESTING_GUIDE.md)
-- **Issues**: Open an issue on GitHub
-- **API Docs**: http://localhost:8000/docs (when running)
-
----
-
-## 🙏 Acknowledgments
-
-- **Google Gemini AI** - Smart correction and analysis
-- **Yahoo Finance** - Market data
-- **FastAPI** - Backend framework
-- **React + Vite** - Frontend framework
-
----
-
-**Version**: 2.1.0  
-**Status**: ✅ Production Ready  
-**Last Updated**: October 24, 2025
-
----
-
-## 📚 Additional Documentation
-
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Complete system architecture and design
-- **[CHANGELOG.md](./CHANGELOG.md)** - Version history and changes
-- **[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)** - Detailed deployment instructions
-- **[postman/POSTMAN_TESTING_GUIDE.md](./postman/POSTMAN_TESTING_GUIDE.md)** - API testing guide
-
+4.  **Access**: The application should now be accessible at your domain.

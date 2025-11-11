@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import structlog
@@ -14,6 +14,7 @@ import structlog
 from backend.config.settings import get_settings
 from backend.app.api import router as api_router
 from backend.app.models import AnalysisRequest, AnalysisResponse
+from backend.app.websocket import get_connection_manager
 
 
 # Configure structured logging
@@ -71,6 +72,49 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
+
+# WebSocket endpoint for streaming logs
+@app.websocket("/ws/{request_id}")
+async def websocket_endpoint(websocket: WebSocket, request_id: str):
+    """
+    WebSocket endpoint for streaming real-time analysis logs.
+    
+    Clients connect to this endpoint with a request_id to receive
+    real-time updates about the analysis progress.
+    """
+    connection_manager = get_connection_manager()
+    await connection_manager.connect(websocket, request_id)
+    
+    try:
+        # Send initial connection confirmation
+        await connection_manager.send_personal_message(
+            websocket,
+            {
+                "type": "connected",
+                "message": f"Connected to analysis stream for request {request_id}",
+                "request_id": request_id
+            }
+        )
+        
+        # Keep connection alive and listen for client messages (if needed)
+        while True:
+            try:
+                # Wait for any messages from client (optional)
+                data = await websocket.receive_text()
+                logger.debug("Received message from client", 
+                           request_id=request_id, 
+                           data=data)
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error("WebSocket error", 
+                           request_id=request_id, 
+                           error=str(e))
+                break
+    
+    finally:
+        await connection_manager.disconnect(websocket, request_id)
+        logger.info("WebSocket connection closed", request_id=request_id)
 
 
 @app.get("/health")

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -30,6 +30,8 @@ import {
   ThumbsDown
 } from 'lucide-react'
 import './App.css'
+import { useWebSocketLogs } from './hooks/useWebSocketLogs.js'
+import { StreamingLogPanel } from './components/StreamingLogPanel.jsx'
 
 const API_BASE_URL = 'http://localhost:8000/api/v1'
 
@@ -117,6 +119,16 @@ function App() {
   const [confirmationPrompt, setConfirmationPrompt] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [originalQuery, setOriginalQuery] = useState('')
+  
+  // State for WebSocket streaming
+  const [currentRequestId, setCurrentRequestId] = useState(null)
+  const [enableWebSocket, setEnableWebSocket] = useState(false)
+  
+  // WebSocket logs hook
+  const { logs, isConnected, error: wsError, clearLogs } = useWebSocketLogs(
+    currentRequestId,
+    enableWebSocket
+  )
 
   const handleAnalyze = async (confirmationResponse = null) => {
     if (!query.trim() && !confirmationResponse) return
@@ -131,13 +143,20 @@ function App() {
       setAnalysisResult(null)
       setConfirmationPrompt(null)
       setOriginalQuery(query)
+      clearLogs()
     }
 
     try {
+      // Generate request ID for WebSocket connection
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      setCurrentRequestId(requestId)
+      setEnableWebSocket(true)
+      
       const requestBody = {
         query: confirmationResponse ? originalQuery : query,
         max_iterations: 3,
-        timeout_seconds: 60
+        timeout_seconds: 60,
+        request_id: requestId
       }
 
       // Add conversation fields if this is a confirmation response
@@ -145,7 +164,7 @@ function App() {
         requestBody.conversation_id = conversationId
         requestBody.confirmation_response = confirmationResponse
       }
-
+      
       const response = await fetch(`${API_BASE_URL}/analyze`, {
         method: 'POST',
         headers: {
@@ -179,6 +198,10 @@ function App() {
       setConfirmationPrompt(null)
     } finally {
       setIsAnalyzing(false)
+      // Keep WebSocket open for a bit to receive final logs
+      setTimeout(() => {
+        setEnableWebSocket(false)
+      }, 2000)
     }
   }
 
@@ -320,6 +343,16 @@ function App() {
             prompt={confirmationPrompt}
             onConfirm={handleConfirm}
             onReject={handleReject}
+          />
+        )}
+
+        {/* Streaming Log Panel - Show during confirmation too */}
+        {(isAnalyzing || logs.length > 0) && (
+          <StreamingLogPanel 
+            logs={logs}
+            isConnected={isConnected}
+            error={wsError}
+            onClear={clearLogs}
           />
         )}
 

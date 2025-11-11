@@ -1,6 +1,6 @@
 """
 API routes for the Stock Research Chatbot.
-Enhanced with multi-correction support - ALL corrections in ONE response.
+Enhanced with professional user-facing streaming logs and multi-correction support.
 """
 import uuid
 import time
@@ -26,6 +26,8 @@ from backend.config.settings import get_settings
 from backend.services.ticker_mapper import get_ticker_mapper
 from backend.services.conversation_manager import get_conversation_manager
 from backend.services.smart_correction_service import get_smart_correction_service
+from backend.services.log_broadcaster import create_log_broadcaster
+from backend.app.websocket import get_connection_manager
 from backend.utils.formatters import format_analysis_response
 
 logger = structlog.get_logger()
@@ -44,7 +46,8 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
     Includes smart correction for misspelled company names using Gemini AI.
     ALL corrections are presented in a SINGLE response - no multiple confirmations.
     """
-    request_id = str(uuid.uuid4())
+    # Use request_id from request if provided, otherwise generate one
+    request_id = request.request_id or str(uuid.uuid4())
     start_time = time.time()
     started_at = datetime.now()
     
@@ -53,6 +56,13 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                 query=request.query)
     
     try:
+        # Create log broadcaster early for pre-confirmation logging
+        connection_manager = get_connection_manager()
+        log_broadcaster = create_log_broadcaster(request_id, connection_manager)
+        
+        # Emit initial log - user submitted query
+        await log_broadcaster.query_received(request.query)
+        
         # Initialize services
         orchestrator = YahooFinanceOrchestrator()
         ticker_mapper = get_ticker_mapper()
@@ -76,6 +86,11 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                     logger.info("User confirmed all corrections",
                                conversation_id=request.conversation_id,
                                confirmed_tickers=conversation.confirmed_tickers)
+                    
+                    await log_broadcaster.info(
+                        "✅ Confirmed - proceeding with corrected company names",
+                        details={"confirmed_tickers": conversation.confirmed_tickers}
+                    )
                     
                     # Use confirmed tickers for analysis
                     tickers = conversation.confirmed_tickers
@@ -108,13 +123,22 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
         
         # If not a follow-up, process as new query
         if not request.conversation_id or not request.confirmation_response:
+            # Emit log: analyzing query
+            await log_broadcaster.extracting_tickers()
+            
             # First, try smart correction with Gemini (supports MULTIPLE corrections)
             if smart_correction_service:
+                # Emit log: checking for typos
+                await log_broadcaster.checking_typos()
+                
                 try:
                     correction_result = smart_correction_service.detect_and_correct_multiple(request.query)
                     
                     if correction_result.get('has_misspellings') and correction_result.get('corrections'):
                         corrections = correction_result.get('corrections', [])
+                        
+                        # Emit log: found potential typos
+                        await log_broadcaster.typos_detected(len(corrections))
                         
                         # Create a conversation for confirmation
                         conversation = conversation_manager.create_conversation(request_id)
@@ -173,13 +197,23 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
                 except Exception as e:
                     logger.warning("Smart correction failed, falling back to traditional method",
                                   error=str(e))
+                    await log_broadcaster.info(
+                        "ℹ️  No typos detected, proceeding with ticker extraction"
+                    )
             
             # If no misspellings detected or smart correction failed, extract tickers normally
             if not tickers:
                 tickers, unresolved_names = ticker_mapper.extract_tickers_from_query(request.query)
+                
+                if tickers:
+                    await log_broadcaster.tickers_found(tickers)
         
         # Validate tickers
         if not tickers:
+            await log_broadcaster.error(
+                "No valid stock tickers found in query",
+                error_details={"query": request.query}
+            )
             raise HTTPException(
                 status_code=400,
                 detail="No valid stock tickers found in query. Please specify at least one ticker or company name."
@@ -194,7 +228,8 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
             max_iterations=request.max_iterations,
             timeout_seconds=request.timeout_seconds,
             request_id=request_id,
-            confirmed_tickers=tickers if tickers else None
+            confirmed_tickers=tickers if tickers else None,
+            log_broadcaster=log_broadcaster
         )
         
         # Format response
@@ -218,6 +253,11 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
         logger.error("Stock analysis failed", 
                     request_id=request_id,
                     error=str(e))
+        if 'log_broadcaster' in locals():
+            await log_broadcaster.error(
+                f"Analysis failed: {str(e)}",
+                error_details={"error": str(e)}
+            )
         raise HTTPException(
             status_code=500,
             detail=f"Analysis failed: {str(e)}"

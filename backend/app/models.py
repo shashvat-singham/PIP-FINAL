@@ -93,6 +93,7 @@ class AnalysisRequest(BaseModel):
     query: str = Field(..., description="Natural language query with tickers and analysis request")
     max_iterations: Optional[int] = Field(3, description="Maximum iterations per agent")
     timeout_seconds: Optional[int] = Field(30, description="Timeout for the entire analysis")
+    request_id: Optional[str] = Field(None, description="Request ID for WebSocket streaming")
     conversation_id: Optional[str] = Field(None, description="Conversation ID for follow-up interactions")
     confirmation_response: Optional[str] = Field(None, description="User's response to a confirmation prompt")
 

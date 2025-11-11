@@ -1,5 +1,6 @@
 """
 Yahoo Finance Orchestrator - Real-time stock analysis using Yahoo Finance and Gemini AI.
+Enhanced with professional user-facing streaming logs.
 """
 import asyncio
 import re
@@ -28,6 +29,7 @@ logger = structlog.get_logger()
 class YahooFinanceOrchestrator:
     """
     Orchestrator that uses Yahoo Finance for real-time data and Gemini for analysis.
+    Provides professional streaming logs for user-facing progress updates.
     """
     
     def __init__(self):
@@ -62,12 +64,20 @@ class YahooFinanceOrchestrator:
         sources = []
         
         # Step 1: Fetch stock info
+        if self.log_broadcaster:
+            await self.log_broadcaster.fetching_company_info(ticker)
+        
         step_start = time.time()
         stock_info = self.yahoo_tool.get_stock_info(ticker)
         company_name = stock_info.get('company_name', ticker)
         
         if 'error' in stock_info:
             logger.error(f"Failed to fetch stock info for {ticker}", error=stock_info['error'])
+            if self.log_broadcaster:
+                await self.log_broadcaster.error(
+                    f"Unable to fetch data for {ticker}. Please verify the ticker symbol.",
+                    error_details={"ticker": ticker, "error": stock_info['error']}
+                )
             # Return minimal insight with error
             return TickerInsight(
                 ticker=ticker,
@@ -84,9 +94,15 @@ class YahooFinanceOrchestrator:
             )
         
         # Step 2: Fetch news (News Agent simulation)
+        if self.log_broadcaster:
+            await self.log_broadcaster.fetching_news(ticker, company_name)
+        
         news_step_start = time.time()
         news_articles = self.yahoo_tool.get_news(ticker, limit=10)
         news_latency = (time.time() - news_step_start) * 1000
+        
+        if self.log_broadcaster:
+            await self.log_broadcaster.news_found(ticker, len(news_articles))
         
         # Convert news to sources
         for article in news_articles[:5]:
@@ -98,6 +114,9 @@ class YahooFinanceOrchestrator:
             ))
         
         # Summarize news using Gemini
+        if self.log_broadcaster:
+            await self.log_broadcaster.analyzing_news_sentiment(ticker)
+        
         news_summary = self.gemini_service.summarize_news(ticker, news_articles)
         
         # Create News Agent trace
@@ -120,12 +139,24 @@ class YahooFinanceOrchestrator:
         agent_traces.append(news_trace)
         
         # Step 3: Fetch price data (Price Agent simulation)
+        if self.log_broadcaster:
+            await self.log_broadcaster.fetching_price_data(ticker, company_name)
+        
         price_step_start = time.time()
         price_data = self.yahoo_tool.get_price_history(ticker, period="1mo")
         price_latency = (time.time() - price_step_start) * 1000
         
         # Analyze technical levels using Gemini
+        if self.log_broadcaster:
+            await self.log_broadcaster.analyzing_technicals(ticker)
+        
         technical_analysis = self.gemini_service.analyze_support_resistance(ticker, price_data)
+        
+        if self.log_broadcaster:
+            await self.log_broadcaster.price_analysis_complete(
+                ticker, 
+                price_data.get('trend', 'neutral')
+            )
         
         # Create Price Agent trace
         price_trace = AgentTrace(
@@ -147,10 +178,20 @@ class YahooFinanceOrchestrator:
         agent_traces.append(price_trace)
         
         # Step 4: Fetch financial metrics
+        if self.log_broadcaster:
+            await self.log_broadcaster.fetching_financials(ticker)
+        
         financial_metrics = self.yahoo_tool.get_financial_metrics(ticker)
         
         # Step 5: Generate investment analysis using Gemini (Synthesis Agent)
+        if self.log_broadcaster:
+            await self.log_broadcaster.synthesizing_analysis(ticker)
+        
         synthesis_start = time.time()
+        
+        if self.log_broadcaster:
+            await self.log_broadcaster.generating_recommendation(ticker)
+        
         investment_analysis = self.gemini_service.generate_investment_analysis(
             ticker=ticker,
             company_name=company_name,
@@ -159,6 +200,13 @@ class YahooFinanceOrchestrator:
             financial_metrics=financial_metrics
         )
         synthesis_latency = (time.time() - synthesis_start) * 1000
+        
+        if self.log_broadcaster:
+            await self.log_broadcaster.recommendation_complete(
+                ticker,
+                investment_analysis['stance'],
+                investment_analysis['confidence']
+            )
         
         # Create Synthesis Agent trace
         synthesis_trace = AgentTrace(
@@ -222,6 +270,11 @@ class YahooFinanceOrchestrator:
         )
         
         logger.info(f"Completed analysis for {ticker}", stance=stance.value, confidence=confidence.value)
+        
+        # Emit completion log
+        if self.log_broadcaster:
+            await self.log_broadcaster.ticker_analysis_complete(ticker, company_name)
+        
         return insight
     
     async def analyze(
@@ -230,7 +283,8 @@ class YahooFinanceOrchestrator:
         max_iterations: int = 3, 
         timeout_seconds: int = 60,
         request_id: str = "",
-        confirmed_tickers: Optional[List[str]] = None
+        confirmed_tickers: Optional[List[str]] = None,
+        log_broadcaster = None
     ) -> List[TickerInsight]:
         """
         Run stock analysis workflow using Yahoo Finance and Gemini AI.
@@ -241,10 +295,12 @@ class YahooFinanceOrchestrator:
             timeout_seconds: Timeout for the entire analysis
             request_id: Unique request identifier
             confirmed_tickers: Pre-confirmed tickers to analyze (skips extraction)
+            log_broadcaster: LogBroadcaster instance for streaming logs
             
         Returns:
             List of ticker insights
         """
+        self.log_broadcaster = log_broadcaster
         start_time = time.time()
         
         logger.info("Starting Yahoo Finance stock analysis", 
@@ -270,6 +326,10 @@ class YahooFinanceOrchestrator:
             
             logger.info("Extracted tickers", tickers=tickers, unresolved_names=unresolved_names, request_id=request_id)
             
+            # Emit log for starting analysis
+            if self.log_broadcaster:
+                await self.log_broadcaster.starting_analysis(tickers)
+            
             # Analyze each ticker in parallel
             tasks = [self._analyze_ticker(ticker, query, max_iterations) for ticker in tickers]
             insights = await asyncio.gather(*tasks, return_exceptions=True)
@@ -279,6 +339,11 @@ class YahooFinanceOrchestrator:
             for i, insight in enumerate(insights):
                 if isinstance(insight, Exception):
                     logger.error(f"Error analyzing ticker {tickers[i]}", error=str(insight))
+                    if self.log_broadcaster:
+                        await self.log_broadcaster.error(
+                            f"Failed to analyze {tickers[i]}: {str(insight)}",
+                            error_details={"ticker": tickers[i], "error": str(insight)}
+                        )
                 else:
                     # Format insight with 2 decimal places
                     formatted_insight = format_ticker_insight(insight.model_dump())
@@ -286,6 +351,10 @@ class YahooFinanceOrchestrator:
             
             if not valid_insights:
                 raise Exception("Failed to analyze any tickers. Please try again.")
+            
+            # Emit final completion message
+            if self.log_broadcaster:
+                await self.log_broadcaster.all_analysis_complete(len(valid_insights))
             
             execution_time = time.time() - start_time
             logger.info("Yahoo Finance analysis completed", 
@@ -299,5 +368,9 @@ class YahooFinanceOrchestrator:
             logger.error("Yahoo Finance analysis failed", 
                         request_id=request_id,
                         error=str(e))
+            if self.log_broadcaster:
+                await self.log_broadcaster.error(
+                    f"Analysis failed: {str(e)}",
+                    error_details={"error": str(e)}
+                )
             raise
-
