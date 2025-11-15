@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.models import AnalysisRequest, TickerInsight, StanceType, ConfidenceLevel
-from backend.agents.yahoo_finance_orchestrator import YahooFinanceOrchestrator
+from backend.agents.orchestrator import Orchestrator
 
 
 # Set test environment variable

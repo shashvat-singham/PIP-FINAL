@@ -21,7 +21,7 @@ from backend.app.models import (
     CorrectionSuggestion,
     ConfirmationPrompt
 )
-from backend.agents.yahoo_finance_orchestrator import YahooFinanceOrchestrator
+from backend.agents.orchestrator import Orchestrator
 from backend.config.settings import get_settings
 from backend.services.ticker_mapper import get_ticker_mapper
 from backend.services.conversation_manager import get_conversation_manager
@@ -64,7 +64,7 @@ async def analyze_stocks(request: AnalysisRequest) -> AnalysisResponse:
         await log_broadcaster.query_received(request.query)
         
         # Initialize services
-        orchestrator = YahooFinanceOrchestrator()
+        orchestrator = Orchestrator()
         ticker_mapper = get_ticker_mapper()
         conversation_manager = get_conversation_manager()
         smart_correction_service = get_smart_correction_service()

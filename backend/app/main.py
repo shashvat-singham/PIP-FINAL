@@ -86,16 +86,6 @@ async def websocket_endpoint(websocket: WebSocket, request_id: str):
     await connection_manager.connect(websocket, request_id)
     
     try:
-        # Send initial connection confirmation
-        await connection_manager.send_personal_message(
-            websocket,
-            {
-                "type": "connected",
-                "message": f"Connected to analysis stream for request {request_id}",
-                "request_id": request_id
-            }
-        )
-        
         # Keep connection alive and listen for client messages (if needed)
         while True:
             try:
